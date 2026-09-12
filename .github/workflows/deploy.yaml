@@ -97,9 +97,17 @@ jobs:
             docker compose pull
             docker compose up -d
             docker image prune -f
-            PROTECTED_IDS=$(docker images --format "{{.Tag}} {{.ID}}" "$DOCKER_USERNAME/asituj-ai" | awk -v t="$TAG" '$1==t || $1=="stable" {print $2}')
-
-            docker images --format "{{.Tag}} {{.ID}}" "$DOCKER_USERNAME/asituj-ai" | \
-              awk -v ids="$PROTECTED_IDS" 'BEGIN{n=split(ids,a," ");for(i=1;i<=n;i++)keep[a[i]]=1} !($2 in keep){print $2}' | \
-              sort -u | \
-              xargs -r docker rmi -f
+            KEEP_IDS_FILE=$(mktemp)
+            for ref in "$DOCKER_USERNAME/asituj-ai:$TAG" "$DOCKER_USERNAME/asituj-ai:stable"; do
+              docker image inspect --format '{{.Id}}' "$ref" 2>/dev/null >> "$KEEP_IDS_FILE" || true
+            done
+            sort -u -o "$KEEP_IDS_FILE" "$KEEP_IDS_FILE"
+            
+            if [ ! -s "$KEEP_IDS_FILE" ]; then
+              echo "WARNING: could not resolve protected image IDs — skipping cleanup."
+            else
+              docker images --no-trunc --format '{{.ID}}' "$DOCKER_USERNAME/asituj-ai" | sort -u \
+                | grep -v -F -f "$KEEP_IDS_FILE" \
+                | xargs -r docker rmi -f
+            fi
+            rm -f "$KEEP_IDS_FILE"
